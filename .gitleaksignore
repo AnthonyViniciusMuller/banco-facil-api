@@ -1,0 +1,28 @@
+# =====================================================================
+# .gitleaksignore
+#
+# Por que este arquivo existe:
+#
+# As credenciais de exemplo foram removidas de AppConfig.java, mas o
+# Gitleaks varre TODO o historico de commits — e elas continuam existindo
+# no commit em que foram introduzidas. Isso nao e um falso positivo nem um
+# bug: uma vez commitado, um segredo permanece na historia do Git para
+# sempre, a menos que a historia seja reescrita (git filter-repo / BFG +
+# force-push).
+#
+# Em um caso real, a resposta correta seria ROTACIONAR a credencial
+# (invalidar a antiga no provedor e emitir uma nova) e, opcionalmente,
+# reescrever a historia. Aqui as duas ocorrencias sao valores de exemplo
+# publicos, documentados pelos proprios fornecedores e que nunca foram
+# credenciais validas; por isso o tratamento adequado e reconhece-las
+# explicitamente, por fingerprint exato, em vez de reescrever a historia.
+#
+# Formato do fingerprint: <commit>:<arquivo>:<regra>:<linha>
+# (copiado do log do job "secret-scan" / saida de `gitleaks detect -v`)
+# =====================================================================
+
+# Chave de acesso AWS de exemplo (documentacao oficial da AWS)
+21dc3b3dce22770de1abfb33fe6dd527f212b72a:src/main/java/com/unifebe/devsecops/config/AppConfig.java:aws-access-token:14
+
+# Chave de API de exemplo do provedor de pagamentos
+21dc3b3dce22770de1abfb33fe6dd527f212b72a:src/main/java/com/unifebe/devsecops/config/AppConfig.java:stripe-access-token:18
