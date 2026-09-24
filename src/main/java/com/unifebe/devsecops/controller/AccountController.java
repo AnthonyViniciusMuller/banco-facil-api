@@ -10,7 +10,6 @@ import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.sql.Statement;
 
 @RestController
 public class AccountController {
@@ -26,25 +25,39 @@ public class AccountController {
         return paymentService.applyDiscount(price, percent);
     }
 
+    /**
+     * CORRECAO (SAST - SQL Injection):
+     *
+     * A versao anterior concatenava o parametro "id" vindo da requisicao HTTP
+     * diretamente na string SQL executada por um Statement. Isso permitia a um
+     * atacante alterar a estrutura da consulta (ex.: "1' OR '1'='1").
+     *
+     * Agora a consulta e fixa e o valor do usuario viaja como PARAMETRO de um
+     * PreparedStatement: o driver envia comando e dados separadamente, de modo
+     * que o conteudo de "id" nunca e interpretado como SQL.
+     *
+     * O try-with-resources tambem garante o fechamento de Connection,
+     * PreparedStatement e ResultSet (vazamento de recursos e uma falha de
+     * disponibilidade, que tambem e seguranca).
+     */
     @GetMapping("/conta")
     public String buscarConta(@RequestParam String id) throws SQLException {
-        Connection conn = DriverManager.getConnection("jdbc:h2:mem:test");
-        Statement stmt = conn.createStatement();
+        String sql = "SELECT nome FROM contas WHERE id = ?";
 
-        //FALHA (SQL Injection): o parametro "id" vem direto da requisicao HTTP
-        //e e concatenado na string SQL sem nenhuma sanitizacao/parametrizacao.
-        //Um atacante pode enviar, por exemplo, "1' OR '1'='1" para ler contas
-        //que nao deveria, ou "1'; DROP TABLE contas; --" para destruir dados.
-        ResultSet rs = stmt.executeQuery("SELECT * FROM contas WHERE id = '" + id + "'");
+        try (Connection conn = DriverManager.getConnection("jdbc:h2:mem:test");
+             PreparedStatement stmt = conn.prepareStatement(sql)) {
 
-        StringBuilder resultado = new StringBuilder();
-        while (rs.next()) {
-            resultado.append(rs.getString("nome")).append(" ");
+            stmt.setString(1, id);
+
+            try (ResultSet rs = stmt.executeQuery()) {
+                StringBuilder resultado = new StringBuilder();
+                while (rs.next()) {
+                    resultado.append(rs.getString("nome")).append(" ");
+                }
+                return resultado.toString().trim();
+            }
         }
-        return resultado.toString();
     }
-
-    
 
     @GetMapping("/health")
     public String health() {
