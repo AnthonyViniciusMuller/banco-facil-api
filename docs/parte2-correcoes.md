@@ -1,73 +1,37 @@
-# Parte 2 — Registro das correções e roteiro de evidências
+# Parte 2 — Hands-on: pipeline, falhas observadas e correções
 
-## 1. O que foi corrigido
+Repositório: https://github.com/AnthonyViniciusMuller/banco-facil-api
+Imagem publicada: `ghcr.io/anthonyviniciusmuller/banco-facil-api`
 
-| # | Gate | Problema encontrado | Correção aplicada | Arquivo |
-|---|---|---|---|---|
-| 1 | `secret-scan` | Gitleaks detectou `aws-access-token` (linha 14) e `stripe-access-token` (linha 18) em `AppConfig.java`, presentes no commit inicial | Constantes removidas; valores passam a ser lidos com `System.getenv(...)`, com falha rápida se a variável não existir. Os dois achados históricos foram aceitos explicitamente por fingerprint | `src/main/java/com/unifebe/devsecops/config/AppConfig.java`, `.gitleaksignore` |
-| 2 | `unit-tests` | `PaymentServiceTest` falhava: `expected: <180.0> but was: <198.0>` | Fórmula de `applyDiscount` corrigida: divisão por `100` em vez de `1000` | `src/main/java/com/unifebe/devsecops/service/PaymentService.java` |
-| 3 | `sast` | Semgrep reportava SQL Injection (parâmetro `id` concatenado na query) e a chave de API em código | `Statement` + concatenação substituídos por `PreparedStatement` com parâmetro `?`, dentro de `try-with-resources`. O achado da chave saiu com a correção nº 1 | `src/main/java/com/unifebe/devsecops/controller/AccountController.java` |
-| 4 | `sca` | Trivy reportava `log4j-core:2.14.1` (CVE-2021-44228, Log4Shell) e CVEs HIGH/CRITICAL trazidas pelo Spring Boot 3.2.5 | Dependência `log4j-core` **removida** (o código usa apenas a API do log4j, que vem com o `spring-boot-starter-logging`); `spring-boot-starter-parent` atualizado de 3.2.5 para 3.5.16; `tomcat.version` sobrescrita para 10.1.60 | `pom.xml` |
-| 5 | revisão manual | `com.google.code.gson:gson` declarada **duas vezes** e não importada em nenhum arquivo de `src/` | Ambas as declarações removidas | `pom.xml` |
-| 6 | `dockerfile-lint` | Hadolint reportava `DL3007` (`FROM openjdk:latest`) e `DL3002` (`USER root`) | Multi-stage build: estágio de compilação em `maven:3.9-eclipse-temurin-17`, runtime em `eclipse-temurin:17-jre-alpine`; usuário de sistema `app` não-privilegiado; `COPY --chown` | `Dockerfile` |
-| — | workflow | O passo "Empacotar aplicacao" (`mvn package`) tornou-se redundante com o multi-stage build | Passo e configuração de JDK removidos do job `build-and-push` | `.github/workflows/security.yml` |
+A pipeline tem cinco gates em sequência, cada um rodando só se o anterior passar. Corrigi um problema por push, de propósito, para observar cada gate falhar por sua vez.
 
-## 2. Sobre o `.gitleaksignore`
-
-O Gitleaks varre **todo o histórico de commits**, não apenas o estado atual dos arquivos. Remover as constantes de `AppConfig.java` não faz o gate passar: as chaves continuam existindo no commit em que foram introduzidas, e continuariam existindo mesmo se o arquivo fosse deletado.
-
-Como as duas ocorrências são valores de exemplo públicos, documentados pelos próprios fornecedores, e nunca foram credenciais válidas, o tratamento adotado foi o reconhecimento explícito de cada achado pelo seu fingerprint (`commit:arquivo:regra:linha`), obtido da saída do próprio Gitleaks. Reescrever o histórico (`git filter-repo` / BFG + force-push) só se justifica quando o segredo é real — e, mesmo aí, a primeira medida é **rotacionar** a credencial, não reescrever a história.
-
-Dois cuidados que valem para qualquer repositório:
-
-* nenhum valor de chave foi copiado para os documentos, para o `README.md` ou para o próprio `.gitleaksignore` — um valor colado em qualquer arquivo gera uma ocorrência nova, com fingerprint próprio;
-* se os commits forem reescritos (`amend`, `rebase`, `squash` + force-push), os hashes mudam e as entradas perdem validade: é preciso regenerá-las a partir do log do job `secret-scan`.
-
-## 3. Validação local
-
-Executada antes do push, com Docker (o repositório não tem Maven instalado localmente):
-
-| Verificação | Comando equivalente | Resultado |
+| Execução | Gate que falhou | O que foi reportado |
 |---|---|---|
-| Gitleaks sobre o histórico completo | `gitleaks detect --source . -v` | `no leaks found` (2 commits varridos) |
-| Testes unitários | `mvn --batch-mode test` | `Tests run: 1, Failures: 0, Errors: 0` |
-| Hadolint com o mesmo limiar do CI | `hadolint --failure-threshold warning Dockerfile` | Apenas `DL3066` (nível *info*, não bloqueia) |
-| Build da imagem | `docker build -t banco-facil-api:test .` | Sucesso — multi-stage, imagem final apenas com JRE |
-| Conteúdo do `.jar` empacotado | `jar tf target/*.jar` | `log4j-api-2.24.3`, `log4j-to-slf4j-2.24.3`, `tomcat-embed-core-10.1.60`, `spring-core-6.2.19`; **sem `log4j-core`, sem `gson`** |
+| 1 | `secret-scan` | Gitleaks: `aws-access-token` (linha 14) e `stripe-access-token` (linha 18) em `AppConfig.java`. `leaks found: 2` |
+| 2 | `unit-tests` | `AssertionFailedError: expected: <180.0> but was: <198.0>` em `PaymentServiceTest` |
+| 3 | `sast` | Semgrep: 2 findings em `AccountController`, regras `formatted-sql-string` e `tainted-sql-string` |
+| 4 | `sca` | Trivy: 3 vulnerabilidades em `log4j-core 2.14.1` — CVE-2021-44228 e CVE-2021-45046 (CRITICAL) e CVE-2021-45105 (HIGH) |
+| 5 | `dockerfile-lint` | Hadolint: `DL3007` (tag `latest`, linha 1) e `DL3002` (último `USER` é root, linha 9) |
+| 6 | nenhum | Pipeline verde, imagem publicada no GHCR |
 
-O scan do Trivy não pôde ser concluído localmente: o Maven Central respondeu `429 Too Many Requests` (o mesmo limite temporário mencionado nas dicas da atividade), e o Trivy precisa resolver o POM pai remotamente para montar a árvore de dependências. A verificação fica por conta do job `sca` da pipeline, que roda a partir de outro IP. Caso o Trivy ainda aponte alguma CVE HIGH/CRITICAL, o ajuste é subir a versão do `spring-boot-starter-parent` ou sobrescrever no `pom.xml` a propriedade de versão do componente apontado — o mesmo procedimento já usado para o `tomcat.version`.
+Vale um comentário sobre a execução 3. As duas regras do Semgrep enxergam a mesma linha por ângulos diferentes: `formatted-sql-string` é um padrão sintático ("há concatenação numa string SQL"), enquanto `tainted-sql-string` é taint analysis, que rastreou o dado do `@RequestParam` até o `executeQuery` e só reporta porque não há sanitização no caminho. E na execução 4 chamam atenção as três CVEs encadeadas: as primeiras correções do Log4Shell (2.15.0, depois 2.16.0) foram elas próprias furadas, o que explica por que a recomendação final foi 2.17.1 e não simplesmente "a próxima versão".
 
-## 4. Roteiro de evidências (prints a capturar)
+## Correções aplicadas
 
-A cada push na `main`, a pipeline avança um gate. As capturas pedidas na avaliação:
+**1. Segredos.** As constantes de `AppConfig.java` foram trocadas por leitura de variáveis de ambiente com `System.getenv`, com falha rápida se a variável não existir. Em produção elas viriam de um cofre (Vault, AWS Secrets Manager), injetadas no deploy — e não do `GITHUB_TOKEN`, que é segredo de CI e nem existe mais quando a aplicação está rodando.
 
-1. **Primeira execução** — `secret-scan` 🔴, demais gates ⚪ *skipped*. *(Já ocorrida: execução registrada no `README.md` gerado pela pipeline.)*
-2. **Falha de cada gate seguinte**, à medida que forem alcançados — `unit-tests`, `sast`, `sca`, `dockerfile-lint`. Como todas as correções foram aplicadas de uma vez, estas falhas intermediárias não vão ocorrer neste repositório; para produzi-las como evidência, aplique as correções **uma por vez**, com um push por correção (ver seção 5).
-3. **Execução final totalmente verde**, incluindo `build-and-push` 🟢.
-4. **Aba Summary** da execução final, com a tabela do job `security-summary` e o veredito `🟢 LIBERADO`.
-5. **Packages** do repositório, mostrando a imagem publicada em `ghcr.io/<usuario>/<repositorio>`.
-6. *(Opcional)* Tela da Branch Protection Rule configurada.
+Só isso não fez o gate passar. Como o Gitleaks varre todo o histórico, as duas chaves continuam detectáveis no commit em que foram introduzidas, e continuariam mesmo se o arquivo fosse apagado. Como são valores de exemplo públicos, documentados pelos próprios fornecedores, que nunca foram credenciais válidas, reconheci os dois achados explicitamente por fingerprint (`commit:arquivo:regra:linha`) em um `.gitleaksignore`, em vez de reescrever o histórico. Reescrever só se justifica quando o segredo é real — e mesmo aí a primeira medida é rotacionar, não reescrever. Vale registrar que isso é diferente de desligar o gate: é uma aceitação de risco nomeada, versionada e revisável em code review.
 
-## 5. Como produzir as capturas de falha de cada gate
+**2. Teste unitário.** A fórmula de `applyDiscount` passou a dividir por 100.
 
-Se a evidência de cada gate falhando for exigida, a ordem abaixo reproduz a progressão, com um push por etapa (lembrando de rodar `git pull --rebase origin main` antes de cada push, porque o job `generate-readme` commita o `README.md` ao final de cada execução):
+**3. SAST.** O `Statement` com concatenação virou `PreparedStatement` com parâmetro `?`, dentro de `try-with-resources`. Com isso o driver envia comando e dados separadamente e o conteúdo do parâmetro nunca é interpretado como SQL. O achado da chave de API sumiu junto com a correção 1.
 
-| Push | Aplicar apenas | Gate que passa a falhar |
-|---|---|---|
-| 1 | nada (estado original) | `secret-scan` |
-| 2 | correção 1 (`AppConfig.java` + `.gitleaksignore`) | `unit-tests` |
-| 3 | correção 2 (`PaymentService.java`) | `sast` |
-| 4 | correção 3 (`AccountController.java`) | `sca` |
-| 5 | correções 4 e 5 (`pom.xml`) | `dockerfile-lint` |
-| 6 | correção 6 (`Dockerfile`) | nenhum — pipeline verde e imagem publicada |
+**4. SCA.** Removi o `log4j-core` em vez de atualizá-lo: o `PaymentService` usa apenas a API do log4j, que já vem com o `spring-boot-starter-logging` pela ponte `log4j-to-slf4j`. Dependência que não existe não precisa de patch futuro. Também subi o `spring-boot-starter-parent` de 3.2.5 para 3.5.16 e sobrescrevi `tomcat.version` para 10.1.60.
 
-## 6. Branch Protection (item opcional)
+**5. Dependência não utilizada.** O `gson` estava declarado duas vezes no `pom.xml` e não era importado em nenhum arquivo de `src/` (`grep -r "import com.google.gson" src/` não retorna nada). Removi as duas declarações. Cada dependência inútil é uma aposta desnecessária em CVEs futuras.
 
-Configuração sugerida em **Settings → Branches → Add branch protection rule**, para o padrão `main`:
+**6. Dockerfile.** Virou multi-stage, com compilação em `maven:3.9-eclipse-temurin-17` e runtime em `eclipse-temurin:17-jre-alpine`, mais um usuário de sistema `app` sem privilégios criado com `addgroup -S`/`adduser -S` e o `.jar` copiado com `--chown`. O Hadolint ainda exibe `DL3066` (usuário não numérico), mas é nível *info* e não bloqueia. Como a compilação passou para dentro do primeiro estágio, o passo de empacotamento do job `build-and-push` ficou redundante e foi removido do workflow.
 
-* *Require a pull request before merging* — com pelo menos 1 aprovação;
-* *Require status checks to pass before merging* — marcando os cinco checks pelo **nome do job**: `Deteccao de Segredos (Gitleaks)`, `Testes Unitarios (Maven)`, `Analise Estatica de Codigo (Semgrep)`, `Analise de Dependencias (Trivy)` e `Lint do Dockerfile (Hadolint)`. O GitHub só lista um check depois que ele rodou ao menos uma vez;
-* *Require branches to be up to date before merging*;
-* *Do not allow bypassing the above settings* — sem isso, administradores contornam a regra.
+## Evidências
 
-Duas observações práticas: em repositório privado, o recurso depende do plano da conta; e o job `generate-readme` faz push direto na `main`, então passará a falhar quando a regra exigir pull request. Isso é esperado e não afeta os cinco gates.
+*(inserir aqui os prints da aba Actions: a primeira execução com o `secret-scan` falhando, a falha de cada gate seguinte, a execução final totalmente verde com o `build-and-push`, o Summary com o veredito LIBERADO e a aba Packages com a imagem publicada)*
