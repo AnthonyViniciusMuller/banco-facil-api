@@ -13,8 +13,8 @@ Este arquivo e gerado automaticamente pela pipeline.
 |---|---|
 | Status | 🟢 Sucesso |
 | Imagem | `ghcr.io/anthonyviniciusmuller/banco-facil-api` |
-| Tags | `latest`, `be252a003ae2d8539de17efe18c2c80843bc52b2` |
-| Digest | `sha256:3a48934697b851ecce24ca5f333387c0bd3733c69456c11c8dc85a6ceae0633b` |
-| Commit | `be252a003ae2d8539de17efe18c2c80843bc52b2` |
-| Execucao | [36055059850](https://github.com/AnthonyViniciusMuller/banco-facil-api/actions/runs/36055059850) |
-| Data | 24/09/2026 20:30 UTC |
+| Tags | `latest`, `ed8b95c5f0d31643888ef98d401eded5c6025777` |
+| Digest | `sha256:ee45577324355b28d9f41550e0e49ac9362112f2b15c241bcecac22f4e3a266c` |
+| Commit | `ed8b95c5f0d31643888ef98d401eded5c6025777` |
+| Execucao | [36484993602](https://github.com/AnthonyViniciusMuller/banco-facil-api/actions/runs/36484993602) |
+| Data | 28/09/2026 21:18 UTC |
